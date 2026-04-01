@@ -1,0 +1,106 @@
+---
+# Playbook: uninstall_monitoring.yml
+# Popis: Korektne odstranenie monitoringu z Windows serverov
+# Spustenie: ansible-playbook uninstall_monitoring.yml -e target=KE
+- name: Odstranenie monitoring stacku (Promtail & Exporter)
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    nssm_exe: "C:\\Program Files\\Promtail\\nssm.exe"
+
+  tasks:
+
+    # --- PROMTAIL (nainstalovany cez NSSM) ---
+    - name: "[Promtail] Zastavenie a odstranenie sluzby cez NSSM"
+      ansible.windows.win_shell: |
+        $nssm = "{{ nssm_exe }}"
+        if (Test-Path $nssm) {
+            & $nssm stop promtail confirm 2>$null
+            & $nssm remove promtail confirm 2>$null
+        } else {
+            # NSSM uz nie je, skusime priamo cez sc.exe
+            Stop-Service -Name promtail -Force -ErrorAction SilentlyContinue
+            sc.exe delete promtail 2>$null
+        }
+      failed_when: false
+
+    # --- WINDOWS EXPORTER (nainstalovany cez MSI) ---
+    - name: "[Exporter] Zastavenie sluzby"
+      ansible.windows.win_service:
+        name: windows_exporter
+        state: stopped
+      failed_when: false
+
+    - name: "[Exporter] Odinstalovanie cez Win32_Product (rovnaky sposob ako install)"
+      ansible.windows.win_shell: |
+        $app = Get-CimInstance -ClassName Win32_Product | Where-Object { $_.Name -like "*windows_exporter*" }
+        if ($app) {
+            $result = Start-Process msiexec.exe -ArgumentList "/x $($app.IdentifyingNumber) /qn /norestart" -Wait -PassThru
+            exit $result.ExitCode
+        } else {
+            Write-Host "windows_exporter nenajdeny, preskakujem"
+            exit 0
+        }
+      register: msi_uninstall
+      failed_when: msi_uninstall.rc not in [0, 1605]
+
+    # --- FIREWALL ---
+    - name: Odstranenie Firewall pravidiel
+      community.windows.win_firewall_rule:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - "Promtail"
+        - "windows_exporter"
+
+    # --- ADRESARE ---
+    - name: Zmazanie instalacnych adresarov
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "C:\\Program Files\\Promtail"
+        - "C:\\Program Files\\windows_exporter"
+        - "C:\\TaurisIT\\promtail"
+
+    - name: Vymazanie docasnych suborov
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "C:\\Temp\\windows_exporter.msi"
+        - "C:\\Temp\\promtail.zip"
+        - "C:\\Temp\\nssm.zip"
+        - "C:\\Temp\\nssm"
+
+    # --- KONTROLA ---
+    - name: Kontrola - sluzby nesmú existovat
+      ansible.windows.win_shell: |
+        $results = @()
+        foreach ($svc in @("promtail", "windows_exporter")) {
+            $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+            if ($s) { $results += "$svc stale existuje (stav: $($s.Status))" }
+        }
+        if ($results) { Write-Error ($results -join "; "); exit 1 }
+      register: svc_check
+      failed_when: svc_check.rc != 0
+
+    - name: Kontrola - adresare nesmú existovat
+      ansible.windows.win_shell: |
+        $dirs = @(
+            "C:\Program Files\Promtail",
+            "C:\Program Files\windows_exporter",
+            "C:\TaurisIT\promtail"
+        )
+        $existing = $dirs | Where-Object { Test-Path $_ }
+        if ($existing) { Write-Error ("Stale existuju: " + ($existing -join ", ")); exit 1 }
+      register: dir_check
+      failed_when: dir_check.rc != 0
+
+    - name: Zhrnutie
+      ansible.builtin.debug:
+        msg: |
+          === KONTROLA ODINSTALACIE ===
+          Sluzby:   {{ 'OK' if svc_check.rc == 0 else 'PROBLEM - ' + svc_check.stderr }}
+          Adresare: {{ 'OK' if dir_check.rc == 0 else 'PROBLEM - ' + dir_check.stderr }}

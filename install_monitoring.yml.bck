@@ -1,0 +1,181 @@
+---
+# Playbook: install_monitoring.yml
+# Popis: Inštalácia windows_exporter a Promtail na Windows servery
+# Spustenie: ansible-playbook install_monitoring.yml -e target=KE --vault-password-file ~/.vault_pass
+
+- name: Inštalácia monitoring stacku na Windows
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: true
+
+  vars:
+    promtail_install_dir: "C:\\Program Files\\Promtail"
+    promtail_data_dir: "C:\\TaurisIT\\promtail"
+    promtail_config_dest: "C:\\Program Files\\Promtail\\promtail-config.yaml"
+    nssm_exe: "C:\\Program Files\\Promtail\\nssm.exe"
+    exporter_install_dir: "C:\\Program Files\\windows_exporter"
+    exporter_exe: "C:\\Program Files\\windows_exporter\\windows_exporter.exe"
+    exporter_config_dest: "C:\\Program Files\\windows_exporter\\config.yaml"
+
+  tasks:
+
+    # --- ADRESÁROVÁ ŠTRUKTÚRA ---
+    - name: Vytvorenie adresárovej štruktúry
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "C:\\Temp"
+        - "{{ promtail_install_dir }}"
+        - "{{ promtail_data_dir }}"
+        - "{{ exporter_install_dir }}"
+        - "{{ monitoring_log_dir }}"
+
+    # --- WINDOWS EXPORTER ---
+    - name: "[Exporter] Kopírovanie MSI na server"
+      ansible.windows.win_copy:
+        src: "files/windows_exporter-{{ windows_exporter_version }}-amd64.msi"
+        dest: "C:\\Temp\\windows_exporter.msi"
+
+    - name: "[Exporter] Odinštalovanie starej verzie"
+      ansible.windows.win_shell: |
+        $app = Get-CimInstance -ClassName Win32_Product | Where-Object { $_.Name -like "*windows_exporter*" }
+        if ($app) {
+            Stop-Service -Name windows_exporter -Force -ErrorAction SilentlyContinue
+            Start-Process msiexec.exe -ArgumentList "/x $($app.IdentifyingNumber) /qn /norestart" -Wait
+        }
+      failed_when: false
+
+    - name: "[Exporter] Inštalácia MSI"
+      ansible.windows.win_shell: |
+        $result = Start-Process msiexec.exe -ArgumentList "/i C:\Temp\windows_exporter.msi /qn /norestart /L*V C:\Temp\msi_exporter.log" -Wait -PassThru
+        exit $result.ExitCode
+      register: msi_result
+      failed_when: msi_result.rc not in [0, 3010]
+
+    - name: "[Exporter] Debug MSI logu pri zlyhaní"
+      ansible.windows.win_shell: Get-Content "C:\Temp\msi_exporter.log" -Tail 20
+      when: msi_result.rc not in [0, 3010]
+
+    - name: "[Exporter] Nasadenie konfigurácie"
+      ansible.windows.win_template:
+        src: "templates/exporter-config.yaml.j2"
+        dest: "{{ exporter_config_dest }}"
+
+    - name: "[Exporter] Nastavenie správnej cesty služby"
+      ansible.windows.win_shell: |
+        $binPath = '"{{ exporter_exe }}" --config.file="{{ exporter_config_dest }}"'
+        sc.exe config windows_exporter binPath= $binPath start= auto
+      failed_when: false
+
+    - name: "[Exporter] Spustenie služby"
+      ansible.windows.win_service:
+        name: windows_exporter
+        state: started
+        start_mode: auto
+
+    # --- NSSM ---
+    - name: "[NSSM] Kopírovanie ZIP"
+      ansible.windows.win_copy:
+        src: "files/nssm-2.24.zip"
+        dest: "C:\\Temp\\nssm.zip"
+
+    - name: "[NSSM] Rozbalenie ZIP"
+      community.windows.win_unzip:
+        src: "C:\\Temp\\nssm.zip"
+        dest: "C:\\Temp\\nssm"
+        creates: "C:\\Temp\\nssm\\nssm-2.24\\win64\\nssm.exe"
+
+    - name: "[NSSM] Kopírovanie exe"
+      ansible.windows.win_copy:
+        src: "C:\\Temp\\nssm\\nssm-2.24\\win64\\nssm.exe"
+        dest: "{{ nssm_exe }}"
+        remote_src: true
+
+# ... predchádzajúce tasky zostávajú rovnaké ...
+
+    # --- PROMTAIL ---
+    - name: "[Promtail] Stiahnutie ZIP"
+      ansible.windows.win_get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-windows-amd64.exe.zip"
+        dest: "C:\\Temp\\promtail.zip"
+
+    - name: "[Promtail] Rozbalenie ZIP"
+      community.windows.win_unzip:
+        src: "C:\\Temp\\promtail.zip"
+        dest: "{{ promtail_install_dir }}"
+        creates: "{{ promtail_install_dir }}\\promtail-windows-amd64.exe"
+
+    - name: "[Promtail] Premenovanie exe"
+      ansible.windows.win_shell: |
+        if (Test-Path "{{ promtail_install_dir }}\promtail-windows-amd64.exe") {
+            Move-Item -Path "{{ promtail_install_dir }}\promtail-windows-amd64.exe" -Destination "{{ promtail_install_dir }}\promtail.exe" -Force
+        }
+      args:
+        creates: "{{ promtail_install_dir }}\\promtail.exe"
+
+    - name: "[Promtail] Nasadenie konfigurácie"
+      ansible.windows.win_template:
+        src: "templates/promtail-config.yaml.j2"
+        dest: "{{ promtail_config_dest }}"
+
+    - name: "[Promtail] Kontrola a registrácia služby cez NSSM"
+      ansible.windows.win_shell: |
+        $svc = Get-Service -Name promtail -ErrorAction SilentlyContinue
+        if (-not $svc) {
+            Start-Process -FilePath "{{ nssm_exe }}" -ArgumentList 'install promtail "{{ promtail_install_dir }}\promtail.exe"' -Wait
+        }
+        # Nastavíme pracovný adresár na miesto, kde je exe
+        Start-Process -FilePath "{{ nssm_exe }}" -ArgumentList 'set promtail AppDirectory "{{ promtail_install_dir }}"' -Wait
+        # Oprava úvodzoviek pre parametre
+        $params = '--config.file="{{ promtail_config_dest }}"'
+        Start-Process -FilePath "{{ nssm_exe }}" -ArgumentList "set promtail AppParameters $params" -Wait
+        Start-Process -FilePath "{{ nssm_exe }}" -ArgumentList 'set promtail Start SERVICE_AUTO_START' -Wait
+      register: promtail_reg
+
+    - name: "[Promtail] Overenie existencie služby pred spustením"
+      ansible.windows.win_service:
+        name: promtail
+      register: service_check
+      failed_when: not service_check.exists
+
+    - name: "[Promtail] Spustenie služby"
+      ansible.windows.win_service:
+        name: promtail
+        state: started
+        start_mode: auto
+
+    # --- FIREWALL ---
+    - name: Povolenie portov vo firewalle
+      community.windows.win_firewall_rule:
+        name: "{{ item.name }}"
+        localport: "{{ item.port }}"
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+        enabled: true
+      loop:
+        - { name: "Promtail", port: "{{ promtail_port }}" }
+        - { name: "windows_exporter", port: "{{ windows_exporter_port }}" }
+
+    # --- ČISTENIE ---
+    - name: Čistenie dočasných súborov
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "C:\\Temp\\windows_exporter.msi"
+        - "C:\\Temp\\promtail.zip"
+        - "C:\\Temp\\nssm.zip"
+        - "C:\\Temp\\nssm"
+
+  handlers:
+    - name: Restartuj windows_exporter
+      ansible.windows.win_service:
+        name: windows_exporter
+        state: restarted
+
+    - name: Restartuj promtail
+      ansible.windows.win_service:
+        name: promtail
+        state: restarted

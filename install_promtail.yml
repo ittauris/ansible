@@ -1,0 +1,104 @@
+---
+# Playbook: install_promtail.yml
+# Popis: Instalacia Promtail cez NSSM s vyuzitim podadresarov files a templates
+# Spustenie: ansible-playbook install_promtail.yml -e target=KE --vault-password-file ~/.vault_pass
+
+- name: Instalacia Promtail
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: true
+
+  vars:
+    promtail_version: "2.9.10"
+    promtail_url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-windows-amd64.exe.zip"
+    promtail_dest_zip: "C:\\Temp\\promtail.zip"
+    promtail_install_dir: "C:\\Program Files\\Promtail"
+    promtail_data_dir: "C:\\TaurisIT\\promtail"
+    promtail_config_dest: "C:\\Program Files\\Promtail\\promtail-config.yaml"
+    promtail_port: 9080
+    nssm_version: "2.24"
+    nssm_dest_zip: "C:\\Temp\\nssm.zip"
+    nssm_exe: "C:\\Program Files\\Promtail\\nssm.exe"
+
+  tasks:
+    - name: Vytvorenie adresarovej struktury
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "C:\\Temp"
+        - "{{ promtail_install_dir }}"
+        - "{{ promtail_data_dir }}"
+
+    - name: Kopirovanie NSSM z lokalneho adresara files
+      ansible.windows.win_copy:
+        src: "files/nssm-{{ nssm_version }}.zip"
+        dest: "{{ nssm_dest_zip }}"
+
+    - name: Rozbalenie NSSM
+      community.windows.win_unzip:
+        src: "{{ nssm_dest_zip }}"
+        dest: "C:\\Temp\\nssm"
+        creates: "C:\\Temp\\nssm\\nssm-{{ nssm_version }}\\win64\\nssm.exe"
+
+    - name: Presun nssm.exe do instalacneho priecinka
+      ansible.windows.win_copy:
+        src: "C:\\Temp\\nssm\\nssm-{{ nssm_version }}\\win64\\nssm.exe"
+        dest: "{{ nssm_exe }}"
+        remote_src: true
+
+    - name: Stiahnutie Promtail binary z internetu
+      ansible.windows.win_get_url:
+        url: "{{ promtail_url }}"
+        dest: "{{ promtail_dest_zip }}"
+
+    - name: Rozbalenie Promtail
+      community.windows.win_unzip:
+        src: "{{ promtail_dest_zip }}"
+        dest: "{{ promtail_install_dir }}"
+        creates: "{{ promtail_install_dir }}\\promtail-windows-amd64.exe"
+
+    - name: Premenovanie exe na promtail.exe
+      ansible.windows.win_shell: |
+        if (Test-Path "{{ promtail_install_dir }}\promtail-windows-amd64.exe") {
+            Move-Item -Path "{{ promtail_install_dir }}\promtail-windows-amd64.exe" -Destination "{{ promtail_install_dir }}\promtail.exe" -Force
+        }
+      args:
+        creates: "{{ promtail_install_dir }}\\promtail.exe"
+
+    - name: Nasadenie konfiguracie zo sablony
+      ansible.windows.win_template:
+        src: templates/promtail-config.yaml.j2
+        dest: "{{ promtail_config_dest }}"
+      notify: Restartuj Promtail
+
+    - name: Registracia a spustenie sluzby cez NSSM
+      community.windows.win_nssm:
+        name: promtail
+        application: "{{ promtail_install_dir }}\\promtail.exe"
+        app_parameters: "--config.file=\"{{ promtail_config_dest }}\""
+        state: started
+        start_mode: auto
+
+    - name: Firewall pravidlo pre Promtail port
+      community.windows.win_firewall_rule:
+        name: "Promtail"
+        localport: "{{ promtail_port }}"
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+
+    - name: Vymazanie docasnych suborov
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ promtail_dest_zip }}"
+        - "{{ nssm_dest_zip }}"
+        - "C:\\Temp\\nssm"
+
+  handlers:
+    - name: Restartuj Promtail
+      ansible.windows.win_service:
+        name: promtail
+        state: restarted

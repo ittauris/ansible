@@ -1,0 +1,62 @@
+[KE]
+ASKE21.tauris.local ansible_host=10.60.20.40
+ASKE22.tauris.local ansible_host=10.60.20.41
+BSKE21.tauris.local ansible_host=10.60.20.61
+BSKE31.tauris.local ansible_host=10.60.20.35
+DCKE30.tauris.local ansible_host=10.60.20.21
+FSKE21.tauris.local ansible_host=10.60.20.50
+HVKE21.tauris.local ansible_host=10.60.20.31
+HVKE22.tauris.local ansible_host=10.60.20.32
+PSKE21.tauris.local ansible_host=10.60.20.55
+PSKE22.tauris.local ansible_host=10.60.20.56
+PSKE30.tauris.local ansible_host=10.60.20.54
+
+[RS]
+ADMRS30.tauris.local ansible_host=10.20.20.99
+ASRS21.tauris.local ansible_host=10.20.20.40
+ASRS22.tauris.local ansible_host=10.20.20.41
+BSRS21.tauris.local ansible_host=10.20.20.61
+BSRS31.tauris.local ansible_host=10.20.20.35
+DCRS30.tauris.local ansible_host=10.20.20.21
+FSRS21.tauris.local ansible_host=10.20.20.50
+HVRS21.tauris.local ansible_host=10.20.20.31
+HVRS22.tauris.local ansible_host=10.20.20.32
+PSRS30.tauris.local ansible_host=10.20.20.54
+SCCMRS.tauris.local ansible_host=10.20.20.20
+
+[TC]
+ADCTC30.tauris.local ansible_host=10.100.0.23
+ASTC21.tauris.local ansible_host=10.100.0.40
+BIZTC00.tauris.local ansible_host=10.100.0.70
+DBTC22.tauris.local ansible_host=10.100.0.72
+DCTC30.tauris.local ansible_host=10.100.0.21
+PKITC30.tauris.local ansible_host=10.100.0.10
+PMTTC01.tauris.local ansible_host=10.100.0.73
+PSTC30.tauris.local ansible_host=10.100.0.54
+PTTCAP.tauris.local ansible_host=10.100.0.32
+PTTCDB.tauris.local ansible_host=10.100.0.33
+SALTC.tauris.local ansible_host=10.100.0.74
+TSTC21.tauris.local ansible_host=10.100.0.51
+TSTC22.tauris.local ansible_host=10.100.0.52
+TSTC23.tauris.local ansible_host=10.100.0.53
+
+[other]
+PAM-XP.tauris.local ansible_host=192.168.7.139
+MOP9999.tauris.local ansible_host=10.60.50.13
+PN0382T.tauris.local ansible_host=10.60.50.8
+PN0382TL.tauris.local ansible_host=10.60.40.7
+VM-005.tauris.local ansible_host=10.10.67.53
+VM-015.tauris.local ansible_host=10.20.20.15
+TG-BNS-DB.tauris.local ansible_host=10.100.0.41
+WeberNet.tauris.local ansible_host=10.100.0.71
+
+[Test]
+dcke31.test-tauris.local ansible_host=10.60.40.98
+
+# Nadradená skupina pre všetky Windows servery
+[windows:children]
+KE
+RS
+TC
+Test
+other

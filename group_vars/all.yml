@@ -1,0 +1,20 @@
+# Globálne premenné pre všetky hosty
+ansible_user: "srv_ansible@TAURIS.LOCAL"
+
+ansible_connection: winrm
+ansible_winrm_transport: kerberos
+ansible_winrm_port: 5985
+ansible_winrm_scheme: http
+ansible_winrm_server_cert_validation: ignore
+ansible_winrm_kerberos_delegation: true
+ansible_winrm_kerberos_hostname_override: "{{ inventory_hostname }}"
+
+# Monitoring - Verzie a cesty
+monitoring_base_dir: "C:\\TaurisIT"
+monitoring_log_dir: "C:\\TaurisIT\\Log"
+
+promtail_version: "2.9.10"
+promtail_port: 9080
+
+windows_exporter_version: "0.31.3"
+windows_exporter_port: 9182

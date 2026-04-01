@@ -1,0 +1,67 @@
+---
+# Playbook: install_windows_exporter.yml
+# Popis: Instalacia windows_exporter s vyuzitim centralnej konfiguracie a sablon
+# Spustenie: ansible-playbook install_windows_exporter.yml -e target=KE
+
+- name: Inštalácia windows_exporter
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: false
+
+  vars:
+    exporter_install_dir: "C:\\Program Files\\windows_exporter"
+    exporter_config_dest: "C:\\Program Files\\windows_exporter\\config.yaml"
+    exporter_msi_temp: "C:\\Temp\\windows_exporter.msi"
+
+  tasks:
+    - name: Vytvorenie adresárov pre exportér
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "C:\\Temp"
+        - "{{ exporter_install_dir }}"
+
+    - name: Nasadenie konfigurácie zo šablóny
+      ansible.windows.win_template:
+        src: exporter-config.yaml.j2
+        dest: "{{ exporter_config_dest }}"
+      notify: Restartuj windows_exporter
+
+    - name: Stiahnutie MSI balíčka
+      ansible.windows.win_get_url:
+        url: "https://github.com/prometheus-community/windows_exporter/releases/download/v{{ windows_exporter_version }}/windows_exporter-{{ windows_exporter_version }}-amd64.msi"
+        dest: "{{ exporter_msi_temp }}"
+
+    - name: Inštalácia windows_exporter cez MSI
+      ansible.windows.win_package:
+        path: "{{ exporter_msi_temp }}"
+        state: present
+        arguments: >-
+          EXTRA_FLAGS="--config.file=\"{{ exporter_config_dest }}\""
+
+    - name: Firewall pravidlo pre port {{ windows_exporter_port }}
+      community.windows.win_firewall_rule:
+        name: "windows_exporter"
+        localport: "{{ windows_exporter_port }}"
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+        enabled: true
+
+    - name: Overenie stavu služby
+      ansible.windows.win_service:
+        name: windows_exporter
+        state: started
+        start_mode: auto
+
+    - name: Čistenie dočasného MSI súboru
+      ansible.windows.win_file:
+        path: "{{ exporter_msi_temp }}"
+        state: absent
+
+  handlers:
+    - name: Restartuj windows_exporter
+      ansible.windows.win_service:
+        name: windows_exporter
+        state: restarted

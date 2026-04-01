@@ -1,0 +1,53 @@
+---
+- name: Deployment Wazuh Agenta 4.14.3 (Tauris Group)
+  hosts: windows
+  gather_facts: yes
+  vars:
+    wazuh_manager_ip: "10.60.20.85"
+    msi_filename: "wazuh-agent-4.14.3-1.msi"
+    # Dynamicka cesta: ak je 64-bit, pouzi (x86), inak standardny Program Files
+    wazuh_path: "{{ 'C:\\Program Files (x86)\\ossec-agent' if ansible_architecture == '64-bit' else 'C:\\Program Files\\ossec-agent' }}"
+
+  tasks:
+    - name: Vytvorenie docasneho adresara pre instalaciu
+      win_file:
+        path: 'C:\Install\Wazuh'
+        state: directory
+
+    - name: Kopirovanie MSI balicka zo servera (adresara files)
+      win_copy:
+        src: "files/{{ msi_filename }}"
+        dest: "C:\\Install\\Wazuh\\{{ msi_filename }}"
+
+    - name: Instalacia Wazuh Agenta
+      win_package:
+        path: "C:\\Install\\Wazuh\\{{ msi_filename }}"
+        arguments: >
+          /q
+          WAZUH_MANAGER='{{ wazuh_manager_ip }}'
+          WAZUH_REGISTRATION_SERVER='{{ wazuh_manager_ip }}'
+          WAZUH_AGENT_GROUP='{{ group_names[0] | upper | replace(" ", "") }}'
+        state: present
+
+    - name: Nasadenie personalizovanej konfiguracie (ossec-config.yaml.j2)
+      win_template:
+        src: templates/ossec-config.yaml.j2
+        dest: "{{ wazuh_path }}\\ossec.conf"
+      notify: Restart Wazuh Service
+
+    - name: Kontrola a spustenie sluzby Wazuh
+      win_service:
+        name: Wazuh
+        start_mode: auto
+        state: started
+
+    - name: Vymazanie instalacneho MSI suboru
+      win_file:
+        path: "C:\\Install\\Wazuh\\{{ msi_filename }}"
+        state: absent
+
+  handlers:
+    - name: Restart Wazuh Service
+      win_service:
+        name: Wazuh
+        state: restarted

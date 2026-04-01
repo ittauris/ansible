@@ -1,0 +1,85 @@
+---
+- name: "UPDATE: Windows Servery (DC first + Snapshots)"
+  hosts: windows
+  # 1 server (DC) ako prvy, potom zvysok po 5
+  serial: 
+    - 1
+    - 5
+  vars:
+    snapshot_name: "Ansible_Update_{{ lookup('pipe', 'date +%Y%m%d') }}"
+
+  tasks:
+    # --- PRIPRAVA: MAPOVANIE HYPER-V HOSTOV ---
+    - name: Identifikacia Hyper-V hostitela (KE a RS)
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['KE'] + groups['RS'] | select('match', '^HV') | list | unique }}"
+      ansible.windows.win_powershell:
+        script: |
+          if (Get-VM -Name "{{ inventory_hostname.split('.')[0] }}" -ErrorAction SilentlyContinue) { return $true }
+          return $false
+      register: hv_search
+      when: "'KE' in group_names or 'RS' in group_names"
+      ignore_errors: yes
+
+    - name: Priradenie najdeneho HV hosta k VM
+      set_fact:
+        my_hv_host: "{{ item.item }}"
+      loop: "{{ hv_search.results }}"
+      when: 
+        - item.output is defined 
+        - item.output[0] == true
+      no_log: true
+
+    # --- FAZA 1: SNAPSHOTY ---
+    - name: SNAPSHOT: Vytvorenie (Hyper-V)
+      delegate_to: "{{ my_hv_host }}"
+      ansible.windows.win_powershell:
+        script: |
+          Checkpoint-VM -Name "{{ inventory_hostname.split('.')[0] }}" -SnapshotName "{{ snapshot_name }}"
+      when: my_hv_host is defined
+
+    - name: SNAPSHOT: Vytvorenie (VMware TC)
+      delegate_to: localhost
+      community.vmware.vmware_guest_snapshot:
+        hostname: "{{ vcenter_host }}"
+        username: "{{ vcenter_user }}"
+        password: "{{ vcenter_pass }}"
+        datacenter: "Tauris_Cloud"
+        name: "{{ inventory_hostname.split('.')[0] }}"
+        state: present
+        snapshot_name: "{{ snapshot_name }}"
+      when: "'TC' in group_names"
+
+    # --- FAZA 2: AKTUALIZACIA ---
+    - name: UPDATE: Instalacia Security & Critical Updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        reboot: yes
+        state: installed
+      register: update_result
+
+    # --- FAZA 3: CLEANUP ---
+    - name: SNAPSHOT: Odstranenie po uspesnom restarte (Hyper-V)
+      delegate_to: "{{ my_hv_host }}"
+      ansible.windows.win_powershell:
+        script: |
+          Remove-VMSnapshot -VMName "{{ inventory_hostname.split('.')[0] }}" -Name "{{ snapshot_name }}"
+      when: 
+        - my_hv_host is defined
+        - update_result.rebooted or update_result.installed_update_count == 0
+
+    - name: SNAPSHOT: Odstranenie po uspesnom restarte (VMware TC)
+      delegate_to: localhost
+      community.vmware.vmware_guest_snapshot:
+        hostname: "{{ vcenter_host }}"
+        username: "{{ vcenter_user }}"
+        password: "{{ vcenter_pass }}"
+        datacenter: "Tauris_Cloud"
+        name: "{{ inventory_hostname.split('.')[0] }}"
+        state: absent
+        snapshot_name: "{{ snapshot_name }}"
+      when: 
+        - "'TC' in group_names"
+        - update_result.rebooted or update_result.installed_update_count == 0

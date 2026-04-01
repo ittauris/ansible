@@ -1,0 +1,21 @@
+collector:
+  cpu:
+  os:
+  system:
+  memory:
+  service:
+    include: "windows_exporter"
+  scheduled_task:
+    include: "/Microsoft/.+"
+  logical_disk:
+    volume-exclude: "HarddiskVolume.*"
+  net:
+log:
+  level: info
+  file: "{{ monitoring_log_dir | replace('\\', '/') }}/windows_exporter.log"
+scrape:
+  timeout-margin: 0.5
+telemetry:
+  path: /metrics
+web:
+  listen-address: ":{{ windows_exporter_port }}"

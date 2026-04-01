@@ -1,0 +1,4 @@
+# Tento súbor musí byť zašifrovaný pomocou ansible-vault:
+# ansible-vault encrypt group_vars/vault.yml
+
+vault_ansible_password: "c2tching-slot-dragster-backwash-ANGER-patient"

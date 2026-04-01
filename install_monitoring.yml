@@ -1,0 +1,154 @@
+---
+# Playbook: install_monitoring.yml
+# Verzia: 5.9 (Produkcna - Universal - Port 8091 Fix)
+# Popis: Instalacia monitoringu s opravou uvodzoviek a zmenou portu na 8091
+# Spustenie: ansible-playbook install_monitoring.yml -e target=KE --vault-password-file ~/.vault_pass
+
+- name: Univerzalna instalacia monitoringu
+  hosts: "{{ target | default('windows') }}"
+  gather_facts: true
+
+  vars:
+    windows_exporter_version: "0.31.3"
+    promtail_install_dir: "C:\\Program Files\\Promtail"
+    promtail_data_dir: "C:\\TaurisIT\\promtail"
+    promtail_config_dest: "C:\\Program Files\\Promtail\\promtail-config.yaml"
+    nssm_exe: "C:\\Program Files\\Promtail\\nssm.exe"
+    exporter_exe: "C:\\Program Files\\windows_exporter\\windows_exporter.exe"
+    exporter_config_dest: "C:\\Program Files\\windows_exporter\\config.yaml"
+    monitoring_log_dir: "C:\\TaurisIT\\logs"
+    promtail_port: "8091"  # Zmena na port 8091 pre vsetkych
+    log_module: "C:\\Program Files\\WindowsPowerShell\\Modules\\LogHelper\\LogHelper.psm1"
+
+  tasks:
+
+    # --- 1. FILTRACIA A STRUKTURA ---
+    - name: "KONTROLA | Vyradenie ASKE22"
+      ansible.builtin.meta: end_host
+      when: inventory_hostname == 'ASKE22.tauris.local' or ansible_architecture in ['32-bit', 'x86']
+
+    - name: "STRUKTURA | Priečinky"
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop: ["C:\\Temp", "{{ promtail_install_dir }}", "{{ promtail_data_dir }}", "{{ monitoring_log_dir }}"]
+
+    - name: "PRAVA | SYSTEM ACL (Fix pre DC)"
+      ansible.windows.win_acl:
+        path: "{{ item }}"
+        user: "SYSTEM"
+        rights: FullControl
+        type: allow
+        state: present
+        inherit: ContainerInherit, ObjectInherit
+      loop: ["{{ promtail_data_dir }}", "{{ monitoring_log_dir }}"]
+
+    # --- 2. WINDOWS EXPORTER ---
+    - name: "EXPORTER | Instalacia a Config"
+      block:
+        - ansible.windows.win_copy:
+            src: "windows_exporter-{{ windows_exporter_version }}-amd64.msi"
+            dest: "C:\\Temp\\windows_exporter.msi"
+
+        - ansible.windows.win_package:
+            path: "C:\\Temp\\windows_exporter.msi"
+            state: present
+            arguments: "/qn /norestart"
+
+        - ansible.windows.win_template:
+            src: "exporter-config.yaml.j2"
+            dest: "{{ exporter_config_dest }}"
+
+        - name: "EXPORTER | Fix binPath (Uvodzovky)"
+          ansible.windows.win_shell: |
+            $path = '\"{{ exporter_exe }}\" --config.file=\"{{ exporter_config_dest }}\"'
+            sc.exe config windows_exporter binPath= $path start= auto
+          failed_when: false
+
+    # --- 3. PROMTAIL (NSSM & QUOTES FIX) ---
+    - name: "PROMTAIL | Kopirovanie bináriiek"
+      ansible.windows.win_copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        force: false
+      loop:
+        - { src: "promtail-windows-amd64.exe", dest: "{{ promtail_install_dir }}\\promtail.exe" }
+        - { src: "nssm.exe", dest: "{{ nssm_exe }}" }
+
+    - name: "PROMTAIL | Template Configu (Port {{ promtail_port }})"
+      ansible.windows.win_template:
+        src: "promtail-config.yaml.j2"
+        dest: "{{ promtail_config_dest }}"
+      notify: Restartuj promtail
+
+    - name: "PROMTAIL | Registracia sluzby"
+      ansible.windows.win_shell: |
+        if (-not (Get-Service promtail -ErrorAction SilentlyContinue)) {
+            & "{{ nssm_exe }}" install promtail "{{ promtail_install_dir }}\promtail.exe"
+        }
+
+    - name: "PROMTAIL | ImagePath Fix (Uvodzovky)"
+      ansible.windows.win_regedit:
+        path: "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\promtail"
+        name: "ImagePath"
+        data: '"{{ nssm_exe }}"'
+        type: expandstring
+
+    - name: "PROMTAIL | NSSM Parameters Fix (Typ String & Bez uvodzoviek v Directory)"
+      ansible.windows.win_shell: |
+        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\promtail\Parameters"
+        
+        # Definicia parametrov
+        $params = @{
+            "Application"   = "{{ promtail_install_dir }}\promtail.exe"
+            "AppDirectory"  = "{{ promtail_install_dir }}"
+            "AppParameters" = '--config.file="{{ promtail_config_dest }}"'
+        }
+
+        $changed = $false
+        foreach ($name in $params.Keys) {
+            $val = (Get-ItemProperty $regPath -Name $name -ErrorAction SilentlyContinue).$name
+            if ($val -ne $params[$name]) {
+                # Force prepis na typ REG_SZ (String)
+                New-ItemProperty -Path $regPath -Name $name -Value $params[$name] -PropertyType String -Force
+                $changed = $true
+            }
+        }
+        if ($changed) { exit 1 } else { exit 0 }
+      register: promtail_reg_fix
+      changed_when: promtail_reg_fix.rc == 1
+      notify: Restartuj promtail
+
+    - name: "PROMTAIL | Start sluzby"
+      ansible.windows.win_service:
+        name: promtail
+        state: started
+        start_mode: auto
+
+    # --- 4. FIREWALL ---
+    - name: "FIREWALL | Porty"
+      community.windows.win_firewall_rule:
+        name: "{{ item.name }}"
+        localport: "{{ item.port }}"
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+      loop:
+        - { name: "windows_exporter", port: "9100" }
+        - { name: "Promtail", port: "{{ promtail_port }}" }
+
+    # --- 5. LOGOVANIE ---
+    - name: "LOG | Finalny zapis"
+      ansible.windows.win_shell: |
+        if (Test-Path "{{ log_module }}") {
+            Import-Module "{{ log_module }}" -Force
+            Write-CustomLog -Message "Monitoring v5.9 uspesne nasadeny (Port {{ promtail_port }})" -Type "Information" -EventSource "Ansible" -LogFileName "{{ monitoring_log_dir }}\deploy.log"
+        }
+      failed_when: false
+
+  handlers:
+    - name: Restartuj windows_exporter
+      ansible.windows.win_service: { name: windows_exporter, state: restarted }
+    - name: Restartuj promtail
+      ansible.windows.win_service: { name: promtail, state: restarted }
