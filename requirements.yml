@@ -1,0 +1,10 @@
+---
+collections:
+  - name: ansible.windows
+    version: ">=2.5.0"
+  - name: community.windows
+    version: ">=2.3.0"
+  - name: community.vmware
+    version: ">=4.0.0"
+  - name: community.general
+    version: ">=9.0.0"

@@ -1,3 +1,5 @@
 *.retry
 *.log
 .ansible_cache
+*.bck
+*.yml.bck

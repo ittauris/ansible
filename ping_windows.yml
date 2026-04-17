@@ -1,0 +1,23 @@
+---
+# Playbook: ping_windows.yml
+# Popis: Test WinRM konektivity na vsetky Windows hosty
+# Pouzitie: ansible-playbook ping_windows.yml
+#           ansible-playbook ping_windows.yml -l KE
+
+- name: Test WinRM konektivity
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+    - name: Ping Windows hostov
+      ansible.windows.win_ping:
+
+    - name: Zobraz informacie o OS
+      ansible.windows.win_shell: |
+        $os = Get-CimInstance Win32_OperatingSystem
+        Write-Output "$($os.Caption) - Build $($os.BuildNumber) - Uptime: $([int]((Get-Date) - $os.LastBootUpTime).TotalHours)h"
+      register: os_info
+
+    - name: Vypis vysledky
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ os_info.stdout | trim }}"
