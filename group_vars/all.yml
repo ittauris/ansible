@@ -3,8 +3,8 @@ ansible_user: "srv_ansible@TAURIS.LOCAL"
 
 ansible_connection: winrm
 ansible_winrm_transport: negotiate
-ansible_winrm_port: 5985
-ansible_winrm_scheme: http
+ansible_winrm_port: 5986
+ansible_winrm_scheme: https
 ansible_winrm_server_cert_validation: ignore
 ansible_winrm_kerberos_delegation: true
 ansible_winrm_kerberos_hostname_override: "{{ inventory_hostname }}"
