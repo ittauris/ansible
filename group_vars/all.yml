@@ -18,3 +18,4 @@ promtail_port: 9080
 
 windows_exporter_version: "0.31.3"
 windows_exporter_port: 9182
+ansible_password: "{{ vault_ansible_password }}"
