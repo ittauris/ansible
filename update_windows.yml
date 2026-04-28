@@ -1,19 +1,90 @@
 ---
-- name: "UPDATE: Windows Servery (DC first + Snapshots)"
-  hosts: windows
+# ==============================================================
+# PLAY 1: Domain Controllers (DCKE, DCRS, DCTC) - jeden po druhom
+# ==============================================================
+- name: "FAZA 1: Aktualizacia Domain Controllers"
+  hosts: DC
   gather_facts: false
-  serial:
-    - 1
-    - 5
+  serial: 1
+  max_fail_percentage: 0
   vars:
     snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
 
   tasks:
+    - name: "SNAPSHOT: Vytvorenie (VMware TC)"
+      delegate_to: localhost
+      community.vmware.vmware_guest_snapshot:
+        hostname: "{{ vcenter_host }}"
+        username: "{{ vcenter_user }}"
+        password: "{{ vcenter_pass }}"
+        datacenter: "Tauris_Cloud"
+        name: "{{ inventory_hostname.split('.')[0] }}"
+        state: present
+        snapshot_name: "{{ snapshot_name }}"
+      when: "'DCTC' in group_names"
 
-    # --- PRIPRAVA: MAPOVANIE HYPER-V HOSTOV ---
-    - name: Identifikacia Hyper-V hostitela (KE a RS)
+    - name: "UPDATE: Instalacia Security & Critical Updates"
+      ansible.windows.win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        reboot: yes
+        state: installed
+      register: update_result
+
+    - name: "SNAPSHOT: Odstranenie po uspesnom update (VMware TC)"
+      delegate_to: localhost
+      community.vmware.vmware_guest_snapshot:
+        hostname: "{{ vcenter_host }}"
+        username: "{{ vcenter_user }}"
+        password: "{{ vcenter_pass }}"
+        datacenter: "Tauris_Cloud"
+        name: "{{ inventory_hostname.split('.')[0] }}"
+        state: absent
+        snapshot_name: "{{ snapshot_name }}"
+      when:
+        - "'DCTC' in group_names"
+        - update_result is defined
+        - not (update_result.failed | default(false)) | bool
+        - update_result.rebooted | bool or update_result.installed_update_count | int == 0
+
+# ==============================================================
+# PLAY 2: Hyper-V hosty - po 2 (reboot HV = kratsi okno)
+# ==============================================================
+- name: "FAZA 2: Aktualizacia Hyper-V serverov"
+  hosts: windows_hv
+  gather_facts: false
+  serial: 2
+  max_fail_percentage: 0
+  vars:
+    snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
+
+  tasks:
+    - name: "UPDATE: Instalacia Security & Critical Updates"
+      ansible.windows.win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        reboot: yes
+        state: installed
+      register: update_result
+
+# ==============================================================
+# PLAY 3: Ostatne Windows servery - po 5
+# ==============================================================
+- name: "FAZA 3: Aktualizacia ostatnych Windows serverov"
+  hosts: windows_members
+  gather_facts: false
+  serial: 5
+  max_fail_percentage: 20
+  vars:
+    snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
+
+  tasks:
+    # --- Mapovanie Hyper-V hostitela ---
+    - name: "Identifikacia Hyper-V hostitela"
       delegate_to: "{{ item }}"
-      loop: "{{ (groups['KE'] + groups['RS']) | select('match', '^HV') | list | unique }}"
+      loop: "{{ (groups['HVKE'] | default([]) + groups['HVRS'] | default([])) | unique }}"
       ansible.windows.win_powershell:
         script: |
           if (Get-VM -Name "{{ inventory_hostname.split('.')[0] }}" -ErrorAction SilentlyContinue) {
@@ -25,7 +96,7 @@
       when: "'KE' in group_names or 'RS' in group_names"
       ignore_errors: yes
 
-    - name: Priradenie najdeneho HV hosta k VM
+    - name: "Priradenie HV hostitela k VM"
       set_fact:
         my_hv_host: "{{ item.item }}"
       loop: "{{ hv_search.results | default([]) }}"
@@ -34,7 +105,6 @@
         - item.output[0] | string | lower == 'true'
       no_log: true
 
-    # --- FAZA 1: SNAPSHOTY ---
     - name: "SNAPSHOT: Vytvorenie (Hyper-V)"
       delegate_to: "{{ my_hv_host }}"
       ansible.windows.win_powershell:
@@ -54,7 +124,6 @@
         snapshot_name: "{{ snapshot_name }}"
       when: "'TC' in group_names"
 
-    # --- FAZA 2: AKTUALIZACIA ---
     - name: "UPDATE: Instalacia Security & Critical Updates"
       ansible.windows.win_updates:
         category_names:
@@ -64,7 +133,6 @@
         state: installed
       register: update_result
 
-    # --- FAZA 3: CLEANUP ---
     - name: "SNAPSHOT: Odstranenie po uspesnom update (Hyper-V)"
       delegate_to: "{{ my_hv_host }}"
       ansible.windows.win_powershell:
@@ -83,7 +151,7 @@
         username: "{{ vcenter_user }}"
         password: "{{ vcenter_pass }}"
         datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.')[0] }}"
+        name: "{{ inventory_hostname.split('.")[0] }}"
         state: absent
         snapshot_name: "{{ snapshot_name }}"
       when:
