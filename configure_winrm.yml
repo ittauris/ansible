@@ -1,0 +1,26 @@
+---
+# Playbook: configure_winrm.yml
+# Popis: Konfiguracia WinRM na Windows hostoch
+# Pouzitie: ansible-playbook configure_winrm.yml
+#           ansible-playbook configure_winrm.yml -l KE
+- name: Konfiguracia WinRM
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Povol AllowUnencrypted
+      ansible.windows.win_shell: |
+        winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+      register: winrm_result
+
+    - name: Zobraz vysledok
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: WinRM AllowUnencrypted nastavene"
+
+    - name: Over konfiguraciu
+      ansible.windows.win_shell: |
+        (Get-Item WSMan:\localhost\Service\AllowUnencrypted).Value
+      register: verify_result
+
+    - name: Vypis stav
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: AllowUnencrypted = {{ verify_result.stdout | trim }}"
