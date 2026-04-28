@@ -142,7 +142,7 @@ ansible-playbook ping_windows.yml
 ansible-playbook ping_windows.yml -l KE
 
 # Len DC
-ansible-playbook ping_windows.yml -l DC-KE
+ansible-playbook ping_windows.yml -l DCKE
 ```
 
 ---
