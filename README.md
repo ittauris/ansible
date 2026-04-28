@@ -10,10 +10,13 @@ Prostredie pre správu Windows serverov cez Ansible s Kerberos autentifikáciou.
 /srv/ansible/
 ├── ansible.cfg
 ├── hosts.ini
+├── ping_windows.yml
+├── configure_winrm.yml
 ├── install_windows_exporter.yml
 ├── update_windows.yml
 ├── group_vars/
-│   ├── all.yml        # WinRM + Kerberos konfigurácia, vault referencia
+│   ├── all.yml        # WinRM + Kerberos konfigurácia
+│   ├── windows.yml    # Globálne premenné pre všetky Windows hosty
 │   ├── KE.yml         # Premenné pre lokalitu Košice
 │   ├── RS.yml         # Premenné pre lokalitu Rožňava
 │   ├── TC.yml         # Premenné pre lokalitu Trebišov
@@ -58,13 +61,102 @@ chmod 600 ~/.vault_pass
 
 ## Inventory
 
-Lokalit je definovaných v `hosts.ini`. Každý host patrí do skupiny podľa lokality a zároveň do skupiny `windows`.
+Lokality sú definované v `hosts.ini`. Každý host patrí do skupiny podľa lokality a zároveň do skupiny `windows`.
 
 | Skupina | Lokalita |
 |---------|----------|
 | KE      | Košice   |
 | RS      | Rožňava  |
 | TC      | Trebišov |
+
+Domain Controllery sú v samostatných skupinách:
+
+| Skupina | DC     | Lokalita |
+|---------|--------|----------|
+| DC-KE   | DCKE30 | Košice   |
+| DC-RS   | DCRS30 | Rožňava  |
+| DC-TC   | DCTC30 | Trebišov |
+
+> **Poznámka:** DC-čka vyžadujú reštart pre správnu inicializáciu WinRM listenera po aplikovaní GPO.
+
+---
+
+## Semaphore UI
+
+Ansible tasky sú spravované cez Semaphore (Docker kontajner).
+
+### Konfigurácia
+
+| Položka    | Hodnota                                   |
+|------------|-------------------------------------------|
+| Repository | `https://github.com/ittauris/ansible.git` |
+| Branch     | `main`                                    |
+| Inventory  | `tauris-windows` (File: `hosts.ini`)      |
+| User Creds | `srv_ansible` (Login with password)       |
+| Git Creds  | `IT Tauris GIT` (Login with password)     |
+
+### Požiadavky pre Semaphore kontajner
+
+- `/etc/krb5.conf` musí byť nakonfigurovaný pre doménu `TAURIS.LOCAL`
+- Timezone Docker hosta musí byť `Europe/Bratislava` (Kerberos vyžaduje max. 5 min. časový rozdiel)
+- Semaphore automaticky vykonáva `kinit` pred spustením playbooky pomocou credentials z Key Store
+
+### Spustenie pre konkrétnu lokalitu
+
+V Semaphore template zaškrtni **Prompts → Limit** a zadaj skupinu (napr. `KE`, `RS`, `DC-KE`).
+
+---
+
+## WinRM konfigurácia
+
+### Požiadavky na Windows serveroch
+
+WinRM musí byť nakonfigurovaný cez GPO:
+
+- `Allow remote server management through WinRM` → **Enabled** (IPv4 filter: `*`)
+- `Allow unencrypted traffic` → **Enabled**
+
+Pre member servery: GPO linkované na príslušné OU.
+Pre DC: nastavenia v `Default Domain Controllers Policy`.
+
+### Overenie na Windows
+
+```powershell
+winrm enumerate winrm/config/listener
+winrm get winrm/config/service
+```
+
+---
+
+## Playbook: Ping / test konektivity
+
+**Súbor:** `ping_windows.yml`
+
+Otestuje WinRM konektivitu a zobrazí informácie o OS.
+
+```bash
+# Všetky hosty
+ansible-playbook ping_windows.yml
+
+# Konkrétna lokalita
+ansible-playbook ping_windows.yml -l KE
+
+# Len DC
+ansible-playbook ping_windows.yml -l DC-KE
+```
+
+---
+
+## Playbook: WinRM konfigurácia
+
+**Súbor:** `configure_winrm.yml`
+
+Nastaví `AllowUnencrypted = true` a overí konfiguráciu WinRM na všetkých hostoch.
+
+```bash
+ansible-playbook configure_winrm.yml
+ansible-playbook configure_winrm.yml -l KE
+```
 
 ---
 
@@ -84,7 +176,7 @@ ansible-playbook update_windows.yml --vault-password-file ~/.vault_pass
 ansible-playbook update_windows.yml -l KE --vault-password-file ~/.vault_pass
 
 # Konkrétny host
-ansible-playbook update_windows.yml -l ke-server01 --vault-password-file ~/.vault_pass
+ansible-playbook update_windows.yml -l BSKE31 --vault-password-file ~/.vault_pass
 ```
 
 ### Filtrované aktualizácie
@@ -99,11 +191,11 @@ ansible-playbook update_windows.yml -l ke-server01 --vault-password-file ~/.vaul
 
 Stiahne a nainštaluje `windows_exporter` ako Windows službu. Povolí port vo firewalle a overí že služba beží.
 
-| Parameter | Hodnota |
-|-----------|---------|
-| Verzia    | 0.29.2  |
-| Port      | 9182    |
-| Kolektory | cpu, cs, logical_disk, net, os, service, system, memory |
+| Parameter  | Hodnota                                           |
+|------------|---------------------------------------------------|
+| Verzia     | 0.31.3                                            |
+| Port       | 9182                                              |
+| Kolektory  | cpu, cs, logical_disk, net, os, service, system, memory |
 
 ### Spustenie
 
@@ -131,17 +223,34 @@ http://<server>:9182/metrics
 kinit srv_ansible@TAURIS.LOCAL
 ```
 
-### WinRM nedostupný
+### Kerberos – časový rozdiel
 
-Overiť na Windows strane:
+```bash
+timedatectl
+# Nastaviť ak je UTC
+timedatectl set-timezone Europe/Bratislava
+```
+
+### WinRM HTTP 500
+
+```powershell
+winrm get winrm/config/service
+# Nastaviť manuálne ak GPO ešte neaplikovalo
+winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+```
+
+### WinRM listener ListeningOn = null (DC)
+
+DC vyžaduje reštart pre správnu inicializáciu listenera. Reštartovať mimo pracovnej doby.
+
+### WinRM nedostupný
 
 ```powershell
 winrm enumerate winrm/config/listener
+netstat -ano | findstr :5985
 ```
 
 ### Ansible nenašiel hosty
-
-Overiť inventory:
 
 ```bash
 ansible-inventory --list
