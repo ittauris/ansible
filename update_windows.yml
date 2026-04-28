@@ -11,6 +11,19 @@
     snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
 
   tasks:
+    - name: "Test WinRM dostupnosti"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(5985) }}"
+        timeout: 10
+      delegate_to: localhost
+      register: winrm_check
+      ignore_errors: yes
+
+    - name: "Preskoc host ak nie je dostupny"
+      ansible.builtin.meta: end_host
+      when: winrm_check.failed | default(false)
+
     - name: "SNAPSHOT: Vytvorenie (VMware TC)"
       delegate_to: localhost
       community.vmware.vmware_guest_snapshot:
@@ -49,7 +62,7 @@
         - update_result.rebooted | bool or update_result.installed_update_count | int == 0
 
 # ==============================================================
-# PLAY 2: Hyper-V hosty - po 2 (reboot HV = kratsi okno)
+# PLAY 2: Hyper-V hosty - po 2
 # ==============================================================
 - name: "FAZA 2: Aktualizacia Hyper-V serverov"
   hosts: windows_hv
@@ -60,6 +73,19 @@
     snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
 
   tasks:
+    - name: "Test WinRM dostupnosti"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(5985) }}"
+        timeout: 10
+      delegate_to: localhost
+      register: winrm_check
+      ignore_errors: yes
+
+    - name: "Preskoc host ak nie je dostupny"
+      ansible.builtin.meta: end_host
+      when: winrm_check.failed | default(false)
+
     - name: "UPDATE: Instalacia Security & Critical Updates"
       ansible.windows.win_updates:
         category_names:
@@ -81,7 +107,19 @@
     snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
 
   tasks:
-    # --- Mapovanie Hyper-V hostitela ---
+    - name: "Test WinRM dostupnosti"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(5985) }}"
+        timeout: 10
+      delegate_to: localhost
+      register: winrm_check
+      ignore_errors: yes
+
+    - name: "Preskoc host ak nie je dostupny"
+      ansible.builtin.meta: end_host
+      when: winrm_check.failed | default(false)
+
     - name: "Identifikacia Hyper-V hostitela"
       delegate_to: "{{ item }}"
       loop: "{{ (groups['HVKE'] | default([]) + groups['HVRS'] | default([])) | unique }}"
@@ -151,7 +189,7 @@
         username: "{{ vcenter_user }}"
         password: "{{ vcenter_pass }}"
         datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.")[0] }}"
+        name: "{{ inventory_hostname.split('.')[0] }}"
         state: absent
         snapshot_name: "{{ snapshot_name }}"
       when:
