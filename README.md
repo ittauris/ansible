@@ -73,9 +73,9 @@ Domain Controllery sú v samostatných skupinách:
 
 | Skupina | DC     | Lokalita |
 |---------|--------|----------|
-| DC-KE   | DCKE30 | Košice   |
-| DC-RS   | DCRS30 | Rožňava  |
-| DC-TC   | DCTC30 | Trebišov |
+| DCKE   | DCKE30 | Košice   |
+| DCRS   | DCRS30 | Rožňava  |
+| DCTC   | DCTC30 | Trebišov |
 
 > **Poznámka:** DC-čka vyžadujú reštart pre správnu inicializáciu WinRM listenera po aplikovaní GPO.
 
