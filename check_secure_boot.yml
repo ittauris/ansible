@@ -1,0 +1,22 @@
+---
+- name: Kontrola stavu Secure Boot na Windows serveroch
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Zistit stav Secure Boot
+      ansible.windows.win_powershell:
+        script: |
+          $sb = Confirm-SecureBootUEFI -ErrorAction SilentlyContinue
+          if ($null -eq $sb) {
+            Write-Output "NEDOSTUPNY"
+          } elseif ($sb -eq $true) {
+            Write-Output "ENABLED"
+          } else {
+            Write-Output "DISABLED"
+          }
+      register: sb_result
+
+    - name: Zobrazit vysledok
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: Secure Boot {{ sb_result.output[0] }}"
