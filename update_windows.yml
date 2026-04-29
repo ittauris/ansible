@@ -24,18 +24,6 @@
       ansible.builtin.meta: end_host
       when: winrm_check.failed | default(false)
 
-    - name: "SNAPSHOT: Vytvorenie (VMware TC)"
-      delegate_to: localhost
-      community.vmware.vmware_guest_snapshot:
-        hostname: "{{ vcenter_host }}"
-        username: "{{ vcenter_user }}"
-        password: "{{ vcenter_pass }}"
-        datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.')[0] }}"
-        state: present
-        snapshot_name: "{{ snapshot_name }}"
-      when: "'DCTC' in group_names"
-
     - name: "UPDATE: Instalacia Security & Critical Updates"
       ansible.windows.win_updates:
         category_names:
@@ -44,22 +32,6 @@
         reboot: yes
         state: installed
       register: update_result
-
-    - name: "SNAPSHOT: Odstranenie po uspesnom update (VMware TC)"
-      delegate_to: localhost
-      community.vmware.vmware_guest_snapshot:
-        hostname: "{{ vcenter_host }}"
-        username: "{{ vcenter_user }}"
-        password: "{{ vcenter_pass }}"
-        datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.')[0] }}"
-        state: absent
-        snapshot_name: "{{ snapshot_name }}"
-      when:
-        - "'DCTC' in group_names"
-        - update_result is defined
-        - not (update_result.failed | default(false)) | bool
-        - update_result.rebooted | bool or update_result.installed_update_count | int == 0
 
 # ==============================================================
 # PLAY 2: VM Guests - po 5
@@ -116,18 +88,6 @@
           Checkpoint-VM -Name "{{ inventory_hostname.split('.')[0] }}" -SnapshotName "{{ snapshot_name }}"
       when: my_hv_host is defined
 
-    - name: "SNAPSHOT: Vytvorenie (VMware TC)"
-      delegate_to: localhost
-      community.vmware.vmware_guest_snapshot:
-        hostname: "{{ vcenter_host }}"
-        username: "{{ vcenter_user }}"
-        password: "{{ vcenter_pass }}"
-        datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.')[0] }}"
-        state: present
-        snapshot_name: "{{ snapshot_name }}"
-      when: "'TC' in group_names"
-
     - name: "UPDATE: Instalacia Security & Critical Updates"
       ansible.windows.win_updates:
         category_names:
@@ -144,22 +104,6 @@
           Remove-VMSnapshot -VMName "{{ inventory_hostname.split('.')[0] }}" -Name "{{ snapshot_name }}"
       when:
         - my_hv_host is defined
-        - update_result is defined
-        - not (update_result.failed | default(false)) | bool
-        - update_result.rebooted | bool or update_result.installed_update_count | int == 0
-
-    - name: "SNAPSHOT: Odstranenie po uspesnom update (VMware TC)"
-      delegate_to: localhost
-      community.vmware.vmware_guest_snapshot:
-        hostname: "{{ vcenter_host }}"
-        username: "{{ vcenter_user }}"
-        password: "{{ vcenter_pass }}"
-        datacenter: "Tauris_Cloud"
-        name: "{{ inventory_hostname.split('.')[0] }}"
-        state: absent
-        snapshot_name: "{{ snapshot_name }}"
-      when:
-        - "'TC' in group_names"
         - update_result is defined
         - not (update_result.failed | default(false)) | bool
         - update_result.rebooted | bool or update_result.installed_update_count | int == 0
