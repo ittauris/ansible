@@ -62,43 +62,9 @@
         - update_result.rebooted | bool or update_result.installed_update_count | int == 0
 
 # ==============================================================
-# PLAY 2: Hyper-V hosty - po 2
+# PLAY 2: VM Guests - po 5
 # ==============================================================
-- name: "FAZA 2: Aktualizacia Hyper-V serverov"
-  hosts: windows_hv
-  gather_facts: false
-  serial: 2
-  max_fail_percentage: 0
-  vars:
-    snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
-
-  tasks:
-    - name: "Test WinRM dostupnosti"
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: "{{ ansible_port | default(5985) }}"
-        timeout: 10
-      delegate_to: localhost
-      register: winrm_check
-      ignore_errors: yes
-
-    - name: "Preskoc host ak nie je dostupny"
-      ansible.builtin.meta: end_host
-      when: winrm_check.failed | default(false)
-
-    - name: "UPDATE: Instalacia Security & Critical Updates"
-      ansible.windows.win_updates:
-        category_names:
-          - SecurityUpdates
-          - CriticalUpdates
-        reboot: yes
-        state: installed
-      register: update_result
-
-# ==============================================================
-# PLAY 3: Ostatne Windows servery - po 5
-# ==============================================================
-- name: "FAZA 3: Aktualizacia ostatnych Windows serverov"
+- name: "FAZA 2: Aktualizacia VM Guests"
   hosts: windows_members
   gather_facts: false
   serial: 5
@@ -131,7 +97,7 @@
             Write-Output "false"
           }
       register: hv_search
-      when: "'KE' in group_names or 'RS' in group_names"
+      when: "'KE_guests' in group_names or 'RS_guests' in group_names"
       ignore_errors: yes
 
     - name: "Priradenie HV hostitela k VM"
@@ -197,3 +163,37 @@
         - update_result is defined
         - not (update_result.failed | default(false)) | bool
         - update_result.rebooted | bool or update_result.installed_update_count | int == 0
+
+# ==============================================================
+# PLAY 3: Hyper-V hosty - po 2
+# ==============================================================
+- name: "FAZA 3: Aktualizacia Hyper-V hostov"
+  hosts: windows_hv
+  gather_facts: false
+  serial: 2
+  max_fail_percentage: 0
+  vars:
+    snapshot_name: "Ansible_Update_{{ now().strftime('%Y%m%d') }}"
+
+  tasks:
+    - name: "Test WinRM dostupnosti"
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ansible_port | default(5985) }}"
+        timeout: 10
+      delegate_to: localhost
+      register: winrm_check
+      ignore_errors: yes
+
+    - name: "Preskoc host ak nie je dostupny"
+      ansible.builtin.meta: end_host
+      when: winrm_check.failed | default(false)
+
+    - name: "UPDATE: Instalacia Security & Critical Updates"
+      ansible.windows.win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        reboot: yes
+        state: installed
+      register: update_result
