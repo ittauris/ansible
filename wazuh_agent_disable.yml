@@ -1,0 +1,24 @@
+---
+- name: Zastavenie a deaktivacia Wazuh agenta na Windows serveroch
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Zastavenie sluzby WazuhSvc
+      ansible.windows.win_service:
+        name: WazuhSvc
+        state: stopped
+
+    - name: Nastavenie startu sluzby na disabled
+      ansible.windows.win_service:
+        name: WazuhSvc
+        start_mode: disabled
+
+    - name: Overenie stavu sluzby
+      ansible.windows.win_service_info:
+        name: WazuhSvc
+      register: svc_info
+
+    - name: Zobrazenie stavu
+      ansible.builtin.debug:
+        msg: "WazuhSvc - stav: {{ svc_info.services[0].state }}, start: {{ svc_info.services[0].start_mode }}"
