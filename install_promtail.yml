@@ -105,16 +105,20 @@
       ansible.windows.win_template:
         src: templates/promtail-config.yaml.j2
         dest: "{{ promtail_config_dest }}"
-      notify: Restartuj Promtail
       when: not promtail_installed
 
-    - name: Registracia a spustenie sluzby cez NSSM
-      community.windows.win_nssm:
-        name: promtail
-        application: "{{ promtail_install_dir }}\\promtail.exe"
-        app_parameters: "--config.file=\"{{ promtail_config_dest }}\""
-        state: started
-        start_mode: auto
+    - name: Registracia sluzby cez NSSM
+      ansible.windows.win_shell: |
+        $nssm = "{{ nssm_exe }}"
+        $promtail = "{{ promtail_install_dir }}\promtail.exe"
+        $config = "{{ promtail_config_dest }}"
+
+        if (-not (Get-Service promtail -ErrorAction SilentlyContinue)) {
+            & $nssm install promtail $promtail
+            & $nssm set promtail AppParameters "--config.file=`"$config`""
+            & $nssm set promtail Start SERVICE_AUTO_START
+        }
+        & $nssm start promtail 2>$null
       when: not promtail_installed
 
     - name: Firewall pravidlo pre Promtail port
