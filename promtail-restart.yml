@@ -1,0 +1,41 @@
+---
+- name: Restart Promtail service on Windows servers
+  hosts: windows_members
+  gather_facts: false
+
+  tasks:
+    - name: Stop Promtail service
+      ansible.windows.win_service:
+        name: promtail
+        state: stopped
+      ignore_errors: true
+
+    - name: Wait for service to fully stop
+      ansible.windows.win_wait_for:
+        timeout: 10
+
+    - name: Remove all files from C:\TaurisIT\promtail
+      ansible.windows.win_find:
+        paths: 'C:\TaurisIT\promtail'
+        recurse: false
+      register: promtail_files
+
+    - name: Delete found files
+      ansible.windows.win_file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ promtail_files.files }}"
+
+    - name: Start Promtail service
+      ansible.windows.win_service:
+        name: promtail
+        state: started
+
+    - name: Verify Promtail is running
+      ansible.windows.win_service:
+        name: promtail
+      register: service_status
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Promtail on {{ inventory_hostname }} is {{ service_status.state }}"
